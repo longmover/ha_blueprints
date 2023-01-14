@@ -2,7 +2,7 @@ blueprint:
   name: Dual mode motion and brightness activated light
   description: Turn on a light (or lights) if one or more sensors activate (e.g. motion detector, contact sensor etc), wait for timer to expire and turn off if motion has stopped.  Also supports different light brightnesses for day/night time.
   domain: automation
-  source_url: https://github.com/longmover/ha_blueprints/blob/38fcdb2dd126104e01e5a1f6c0dc00fefb146fda/dual_mode_light_control.yaml
+  source_url: https://github.com/longmover/ha_blueprints/blob/10b6f773ea6d1c57aa58dc462d4ce3896e18d014/dual_mode_light_control.yaml
   input:
     motion_entity:
       name: Motion Sensor
