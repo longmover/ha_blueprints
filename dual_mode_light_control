@@ -1,0 +1,180 @@
+blueprint:
+  name: Dual mode motion and brightness activated light
+  description: Turn on a light (or lights) if one or more sensors activate (e.g. motion detector, contact sensor etc), wait for timer to expire and turn off if motion has stopped.  Also supports different light brightnesses for day/night time.
+  domain: automation
+  source_url: https://github.com/OliverHi/blueprints/blob/f010d88630fa3e0d68074905b1258e8580f3b2f6/motion_brightness_light.yaml
+  input:
+    motion_entity:
+      name: Motion Sensor
+      selector:
+        entity:
+          domain: 
+            - binary_sensor
+            - sensor
+          multiple: true
+    brightness_entity:
+      name: Lux/Brightness Sensor
+      selector:
+        entity:
+          device_class: illuminance
+          multiple: false
+    brightness_trigger:
+      name: Trigger threshold
+      description:
+        Ambient light trigger threshold, a sensor reading higher than this will mean the light does not get switched on
+      default: 20
+      selector:
+        number:
+          min: 0.0
+          max: 1000.0
+          unit_of_measurement: lx
+          mode: slider
+          step: 1.0
+    light_target:
+      name: Light(s) to control
+      selector:
+        target:
+          entity:
+            domain: light
+    day_window_start:
+      name: Day begins, switch from night to day mode
+      default: "07:00:00"
+      selector:
+        time:
+    day_window_end:
+      name: Day ends, switch from day to night mode
+      default: "22:30:00"
+      selector:
+        time:
+    brightness_level_day:
+      name: Light brightness level (day)
+      default: 100
+      description: Daytime bulb brightness
+      selector:
+        number:
+          min: 1.0
+          max: 100.0
+          unit_of_measurement: Percent
+          mode: slider
+          step: 1
+    brightness_level_night:
+      name: Light brightness level (night)
+      default: 5
+      description: Nighttime bulb brightness
+      selector:
+        number:
+          min: 1.0
+          max: 100.0
+          unit_of_measurement: Percent
+          mode: slider
+          step: 1
+    no_motion_wait:
+      name: Wait time
+      description: Time to leave the light on after last motion is detected.
+      default: 120
+      selector:
+        number:
+          min: 0.0
+          max: 3600.0
+          unit_of_measurement: seconds
+          mode: slider
+          step: 1.0
+    transition:
+      name: Light transition time
+      description: Time taken to transition from one state to another
+      default: 1
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          unit_of_measurement: seconds
+          mode: slider
+          step: 1.0
+mode: restart
+max_exceeded: silent
+
+variables:
+  lights: !input "light_target"
+  trigger_lights: false
+
+trigger:
+  platform: state
+  entity_id: !input motion_entity
+  from: "off"
+  to: "on"
+
+action:
+  - if:
+    - condition: numeric_state
+      entity_id: !input brightness_entity
+      below: !input brightness_trigger
+    then:
+      # light level is below threshold, trigger lights
+      if:
+        - condition: time
+          after: !input day_window_start
+          before: !input day_window_end
+      then:
+        # is daytime
+        - service: light.turn_on
+          target: !input light_target
+          data:
+            brightness_pct: !input brightness_level_day
+            transition: !input transition
+        - wait_for_trigger:
+            platform: state
+            entity_id: !input motion_entity
+            from: "on"
+            to: "off"
+      else:
+        # is night time
+        - service: light.turn_on
+          target: !input light_target
+          data:
+            brightness_pct: !input brightness_level_night
+            transition: !input transition
+        - wait_for_trigger:
+            platform: state
+            entity_id: !input motion_entity
+            from: "on"
+            to: "off"
+    else:
+      # light level is above threshold
+      if:
+        # check for any lights already on
+        - "{{ expand(lights.entity_id) | selectattr('state', '==', 'on') | list | count > 0 }}"
+      then:
+        # one or more lights on, assume ambient light is below threshold
+        if:
+          - condition: time
+            after: !input day_window_start
+            before: !input day_window_end
+        then:
+          # is daytime
+          - service: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: !input brightness_level_day
+              transition: !input transition
+          - wait_for_trigger:
+              platform: state
+              entity_id: !input motion_entity
+              from: "on"
+              to: "off"
+        else:
+          # is night time
+          - service: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: !input brightness_level_night
+              transition: !input transition
+          - wait_for_trigger:
+              platform: state
+              entity_id: !input motion_entity
+              from: "on"
+              to: "off"
+
+  # lights are to be turned off after timer expires
+  - delay: !input no_motion_wait
+  - service: light.turn_off
+    target: !input light_target
