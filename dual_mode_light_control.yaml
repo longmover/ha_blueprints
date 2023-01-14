@@ -38,6 +38,7 @@ blueprint:
             domain: light
     day_window_start:
       name: Day begins, switch from night to day mode
+      description: Set both times to to 12:00:00 AM for constand day mode
       default: "07:00:00"
       selector:
         time:
