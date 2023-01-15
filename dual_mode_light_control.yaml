@@ -4,8 +4,8 @@ blueprint:
   domain: automation
   source_url: https://github.com/longmover/ha_blueprints/blob/10b6f773ea6d1c57aa58dc462d4ce3896e18d014/dual_mode_light_control.yaml
   input:
-    motion_entity:
-      name: Motion Sensor
+    trigger_entities:
+      name: Trigger Sensor(s)
       selector:
         entity:
           domain: 
@@ -32,10 +32,17 @@ blueprint:
           step: 1.0
     light_target:
       name: Light(s) to control
+      default : []
       selector:
-        target:
-          entity:
-            domain: light
+        entity:
+          domain: light
+          multiple: true
+    dual_mode:
+      name: Dual mode
+      description: If enabled then night mode will be activated when the current time is outside the day window
+      default: false
+      selector:
+        boolean:
     day_window_start:
       name: Day begins, switch from night to day mode
       description: Set both times to to 12:00:00 AM for constand day mode
@@ -69,9 +76,9 @@ blueprint:
           unit_of_measurement: Percent
           mode: slider
           step: 1
-    no_motion_wait:
+    wait_time:
       name: Wait time
-      description: Time to leave the light on after last motion is detected.
+      description: Time to leave the light on after last activity finishes
       default: 120
       selector:
         number:
@@ -91,91 +98,153 @@ blueprint:
           unit_of_measurement: seconds
           mode: slider
           step: 1.0
+
 mode: restart
 max_exceeded: silent
 
 variables:
-  lights: !input "light_target"
-  trigger_lights: false
+  target_lights: !input light_target
+  dual_mode: !input dual_mode
+  lights_on: "{{ expand(target_lights) | selectattr('state', 'eq', 'on') | list | count > 0 }}"
 
 trigger:
   platform: state
-  entity_id: !input motion_entity
+  entity_id: !input trigger_entities
   from: "off"
   to: "on"
 
 action:
   - if:
+      # check if light level is below threshold
     - condition: numeric_state
       entity_id: !input brightness_entity
       below: !input brightness_trigger
     then:
       # light level is below threshold, trigger lights
       if:
+        # check if current time is within day window
         - condition: time
           after: !input day_window_start
           before: !input day_window_end
       then:
         # is daytime
         - service: light.turn_on
-          target: !input light_target
+          target: 
+            entity_id: !input light_target
           data:
             brightness_pct: !input brightness_level_day
             transition: !input transition
         - wait_for_trigger:
             platform: state
-            entity_id: !input motion_entity
+            entity_id: !input trigger_entities
             from: "on"
             to: "off"
+          # turn light(s) off after timer expires
+        - delay: !input wait_time
+        - service: light.turn_off
+          target: 
+            entity_id: !input light_target
       else:
         # is night time
-        - service: light.turn_on
-          target: !input light_target
-          data:
-            brightness_pct: !input brightness_level_night
-            transition: !input transition
-        - wait_for_trigger:
-            platform: state
-            entity_id: !input motion_entity
-            from: "on"
-            to: "off"
+        if:
+          # check if dual mode is enabled
+          - "{{ dual_mode }}"
+        then:    
+          - service: light.turn_on
+            target: 
+              entity_id: !input light_target
+            data:
+              brightness_pct: !input brightness_level_night
+              transition: !input transition
+          - wait_for_trigger:
+              platform: state
+              entity_id: !input trigger_entities
+              from: "on"
+              to: "off"
+          # turn light(s) off after timer expires
+          - delay: !input wait_time
+          - service: light.turn_off
+            target: 
+              entity_id: !input light_target
+        else:
+          # dual mode is disabled, do not trigger lights, if any lights are on then turn off after activity finishes and after wait time
+          if:
+            - "{{ lights_on }}"
+          then:
+            - wait_for_trigger:
+                platform: state
+                entity_id: !input trigger_entities
+                from: "on"
+                to: "off"
+            # turn light(s) off after timer expires
+            - delay: !input wait_time
+            - service: light.turn_off
+              target: 
+                entity_id: !input light_target
     else:
       # light level is above threshold
       if:
         # check for any lights already on
-        - "{{ expand(lights.device_id) | selectattr('state', '==', 'on') | list | count > 0 }}"
+        - "{{ lights_on }}"
       then:
         # one or more lights on, assume ambient light is below threshold
         if:
+          # check if current time is within day window
           - condition: time
             after: !input day_window_start
             before: !input day_window_end
         then:
           # is daytime
           - service: light.turn_on
-            target: !input light_target
+            target: 
+              entity_id: !input light_target
             data:
               brightness_pct: !input brightness_level_day
               transition: !input transition
           - wait_for_trigger:
               platform: state
-              entity_id: !input motion_entity
+              entity_id: !input trigger_entities
               from: "on"
               to: "off"
+          # turn light(s) off after timer expires
+          - delay: !input wait_time
+          - service: light.turn_off
+            target: 
+              entity_id: !input light_target
         else:
           # is night time
-          - service: light.turn_on
-            target: !input light_target
-            data:
-              brightness_pct: !input brightness_level_night
-              transition: !input transition
-          - wait_for_trigger:
-              platform: state
-              entity_id: !input motion_entity
-              from: "on"
-              to: "off"
-
-  # lights are to be turned off after timer expires
-  - delay: !input no_motion_wait
-  - service: light.turn_off
-    target: !input light_target
+          if:
+            # check if dual mode is enabled
+            - "{{ lights_on }}"
+          then:    
+            - service: light.turn_on
+              target: 
+                entity_id: !input light_target
+              data:
+                brightness_pct: !input brightness_level_night
+                transition: !input transition
+            - wait_for_trigger:
+                platform: state
+                entity_id: !input trigger_entities
+                from: "on"
+                to: "off"
+            # turn light(s) off after timer expires
+            - delay: !input wait_time
+            - service: light.turn_off
+              target: 
+                entity_id: !input light_target
+          else:
+            # dual mode is disabled, do not trigger lights, if any lights are on then turn off after activity finishes and after wait time
+            if:
+              - "{{ lights_on }}"
+            then:
+              - wait_for_trigger:
+                  platform: state
+                  entity_id: !input trigger_entities
+                  from: "on"
+                  to: "off"
+              # turn light(s) off after timer expires
+              - delay: !input wait_time
+              - service: light.turn_off
+                target: 
+                  entity_id: !input light_target
